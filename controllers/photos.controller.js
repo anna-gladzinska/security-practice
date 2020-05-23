@@ -1,4 +1,6 @@
 const Photo = require('../models/photo.model');
+const Voter = require('../models/voter.model');
+const requestIp = require('request-ip');
 
 /****** SUBMIT PHOTO ********/
 
@@ -12,18 +14,31 @@ exports.add = async (req, res) => {
     } = req.fields;
     const file = req.files.file;
 
-    if (title && author && email && file) { // if fields are not empty...
+    function escape(html) {
+      return html.replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
 
+    const emailValidate = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+
+    if (title && author && emailValidate.test(email) && file && title.length <= 25 && author.length <= 50) { // if fields are not empty...
       const fileName = file.path.split('/').slice(-1)[0]; // cut only filename from full path, e.g. C:/test/abc.jpg -> abc.jpg
-      const newPhoto = new Photo({
-        title,
-        author,
-        email,
-        src: fileName,
-        votes: 0
-      });
-      await newPhoto.save(); // ...save new photo in DB
-      res.json(newPhoto);
+      const fileExt = fileName.split('.').slice(-1)[0];
+
+      if (fileExt === 'png' || fileExt === 'jpg' || fileExt === 'gif') {
+        const newPhoto = new Photo({
+          title: escape(title),
+          author: escape(author),
+          email,
+          src: fileName,
+          votes: 0
+        });
+        await newPhoto.save(); // ...save new photo in DB
+        res.json(newPhoto);
+      }
 
     } else {
       throw new Error('Wrong input!');
@@ -55,10 +70,27 @@ exports.vote = async (req, res) => {
     const photoToUpdate = await Photo.findOne({
       _id: req.params.id
     });
+    const findUserByIp = await Voter.findOne({
+      user: requestIp.getClientIp(req)
+    });
     if (!photoToUpdate) res.status(404).json({
       message: 'Not found'
     });
-    else {
+    if (!findUserByIp) {
+      const newVoter = new Voter({
+        user: requestIp.getClientIp(req),
+        votes: [req.params.id]
+      });
+      await newVoter.save();
+      photoToUpdate.votes++;
+      photoToUpdate.save();
+      res.send({
+        message: 'OK'
+      });
+    }
+    if (findUserByIp && !findUserByIp.votes.includes(req.params.id)) {
+      findUserByIp.votes.push(req.params.id);
+      await findUserByIp.save();
       photoToUpdate.votes++;
       photoToUpdate.save();
       res.send({
